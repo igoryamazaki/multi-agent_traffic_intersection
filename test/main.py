@@ -12,7 +12,6 @@ from agent_hitl import AgenteHITL
 
 def main():
     print("=" * 60)
-    print("  ADFERS - SMA com Agentes BDI em MASPY")
     print("  Arquitetura Ética para Veículos Autônomos")
     print("=" * 60)
 
