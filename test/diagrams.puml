@@ -1,0 +1,333 @@
+' ============================================================
+' diagrama_maspy.puml - Modelo MASPY do Sistema ADFERS
+'
+' Notação MASPY (Fig. 11 da documentação):
+'   Círculo = Agente
+'   Nuvem = Crenças iniciais
+'   Elipse = Objetivo inicial
+'   Retângulo = Plano <gatilho; contexto>
+'   Retângulo (ambiente) = Percepção / Ação
+'   Hexágono = Comunicação tell/achieve <info; canal>
+' ============================================================
+
+
+' ============================================================
+' DIAGRAMA 1: Modelo MASPY Completo do Sistema
+' ============================================================
+@startuml diagrama_modelo_maspy
+
+title Modelo MASPY do Sistema ADFERS\n(Crenças, Objetivos, Planos e Comunicação)
+
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontSize 10
+
+' ---- AMBIENTE ----
+rectangle "**Cruzamento**\n(Environment)" as env #E8F5E9 {
+    rectangle "semaforo_aberto(True)" as p1 #C8E6C9
+    rectangle "pedestre_detectado(True)" as p2 #C8E6C9
+    rectangle "obstaculo(False)" as p3 #C8E6C9
+    rectangle "veiculo_detectado(False)" as p4 #C8E6C9
+    component "> executar_movimento(mov) >" as a1
+    component "> registrar_evento(evt) >" as a2
+}
+
+' ---- AGENTE ÉTICO ----
+circle "**AgenteEtico**\n(Agent)" as etico #FFF3E0
+
+cloud "status_etico(monitorando)\nsem_conflito_ativo" as b_etico #FFF3E0
+
+usecase "monitorar_ambiente" as g_etico #FFE0B2
+
+rectangle "monitorar_ambiente\n<gain Goal(monitorar_ambiente);\nBelief(status_etico, Status)>" as pl1_et #FFF3E0
+
+rectangle "avaliar_conflito\n<gain Goal(avaliar_conflito, Conflito);\nBelief(conflito_ativo, C)>" as pl2_et #FFF3E0
+
+rectangle "enviar_recomendacao\n<gain Goal(enviar_recomendacao, Rec);\nnenhum>" as pl3_et #FFF3E0
+
+rectangle "escalar_para_hitl\n<gain Goal(escalar_para_hitl, Dados);\nBelief(conflito_ativo, Conflito)>" as pl4_et #FFF3E0
+
+rectangle "fornecer_detalhes\n<gain Goal(fornecer_detalhes, Pedido);\nnenhum>" as pl5_et #FFF3E0
+
+rectangle "executar_instrucao_hitl\n<gain Goal(executar_instrucao_hitl, Inst);\nnenhum>" as pl6_et #FFF3E0
+
+' ---- AGENTE VA ----
+circle "**VA**\n(Agent)" as va #BBDEFB
+
+cloud "conduzindo(True)\nvelocidade(60)\nlocalizacao(na_via)" as b_va #BBDEFB
+
+usecase "conduzir" as g_va #90CAF9
+
+rectangle "conduzir\n<gain Goal(conduzir);\nBelief(conduzindo, Status)>" as pl1_va #E3F2FD
+
+rectangle "processar_recomendacao\n<gain Belief(sugestao_manobra_segura, Rec);\nBelief(conduzindo, Status)>" as pl2_va #E3F2FD
+
+rectangle "aceitar_sugestao\n<gain Goal(aceitar_sugestao, Dados);\nBelief(conduzindo, Status)>" as pl3_va #E3F2FD
+
+rectangle "pedir_detalhes\n<gain Goal(pedir_detalhes, Conflito);\nnenhum>" as pl4_va #E3F2FD
+
+rectangle "processar_detalhes\n<gain Belief(detalhes_eticos, Det);\nBelief(recomendacao_pendente, Rec)>" as pl5_va #E3F2FD
+
+rectangle "decisao_autonoma\n<gain Goal(decisao_autonoma, Conflito);\nBelief(conduzindo, Status)>" as pl6_va #E3F2FD
+
+rectangle "aguardar_hitl\n<gain Belief(aguardar_hitl, Info);\nnenhum>" as pl7_va #E3F2FD
+
+' ---- AGENTE HITL ----
+circle "**HITL**\n(Agent)" as hitl #FCE4EC
+
+cloud "status(observando)\ntotal_logs(0)" as b_hitl #FCE4EC
+
+rectangle "registrar_log\n<gain Belief(log_evento, Evento);\nnenhum>" as pl1_hitl #FCE4EC
+
+rectangle "investigar_dilema\n<gain Goal(investigar_dilema, Info);\nnenhum>" as pl2_hitl #FCE4EC
+
+rectangle "processar_alerta\n<gain Belief(alerta_decisao_autonoma, Evt);\nnenhum>" as pl3_hitl #FCE4EC
+
+' ---- COMUNICAÇÃO (ECP via Contract Net) ----
+hexagon "tell\nsugestao_manobra_segura\nAgentComm" as comm1 #E1BEE7
+hexagon "achieve\navaliar_conflito\nAgentComm" as comm_cfp #E1BEE7
+hexagon "tell\naguardar_hitl\nAgentComm" as comm2 #E1BEE7
+hexagon "achieve\ninvestigar_dilema\nAgentComm" as comm3 #E1BEE7
+hexagon "tell\nlog_evento\nAgentComm" as comm4 #E1BEE7
+hexagon "achieve\nfornecer_detalhes\nAgentComm" as comm5 #E1BEE7
+hexagon "tell\ndetalhes_eticos\nAgentComm" as comm6 #E1BEE7
+hexagon "achieve\nexecutar_instrucao_hitl\nAgentComm" as comm7 #E1BEE7
+
+' ---- CONEXÕES AGENTE ÉTICO ----
+etico -- b_etico
+etico -- g_etico
+etico -- pl1_et
+etico -- pl2_et
+etico -- pl3_et
+etico -- pl4_et
+etico -- pl5_et
+etico -- pl6_et
+etico <-left- env : percepção\n(sensores)
+
+' ---- CONEXÕES AGENTE VA ----
+va -- b_va
+va -- g_va
+va -- pl1_va
+va -- pl2_va
+va -- pl3_va
+va -- pl4_va
+va -- pl5_va
+va -- pl6_va
+va -- pl7_va
+va <-right- env : percepção\n(sensores)
+va -right-> env : ação\n(atuadores)
+
+' ---- CONEXÕES HITL ----
+hitl -- b_hitl
+hitl -- pl1_hitl
+hitl -- pl2_hitl
+hitl -- pl3_hitl
+
+' ---- COMUNICAÇÃO ECP/CONTRACT NET ----
+etico --> comm1
+comm1 --> va : ECP\nrecomendação
+
+etico --> comm2
+comm2 --> va : ECP\nhandover
+
+etico --> comm3
+comm3 --> hitl : ECP\ndilema
+
+va --> comm5
+comm5 --> etico : Q4\npedir info
+
+etico --> comm6
+comm6 --> va : resposta\ndetalhes
+
+va --> comm4
+etico --> comm4
+comm4 --> hitl : logs
+
+hitl --> comm7
+comm7 --> etico : instrução\nHTIL
+
+@enduml
+
+
+' ============================================================
+' DIAGRAMA 2: Fluxo do Contract Net com ECP
+' ============================================================
+@startuml diagrama_contract_net_ecp
+
+title Contract Net Protocol com ECP\n(Fluxo de Comunicação ADFERS)
+
+skinparam backgroundColor #FEFEFE
+
+participant "AgenteEtico\n(Participante)" as etico #FFF3E0
+participant "AgenteVA\n(Gerente/Decisor)" as va #BBDEFB
+participant "HITL\n(Interventor)" as hitl #FCE4EC
+participant "Cruzamento\n(Ambiente)" as env #E8F5E9
+
+== Monitoramento do Ambiente ==
+etico -> env : percebe(sensores)
+va -> env : percebe(sensores)
+note over etico : Detecta conflito ético\n(Fig. 2: Percepts → Beliefs)
+note over va : Percebe para condução\n(semáforo, via livre)
+
+== Raciocínio Ético (Fig. 2) ==
+note over etico : Plan & Utility selection\nQ1: utilidade maximizada?\n(calcula frear, desviar, seguir)
+
+alt Q1 = Sim (sem dilema)
+    == Contract Net - Fase 1 (CFP/Proposta) ==
+    etico -> va : **tell** Belief("sugestao_manobra_segura")\n**ECP(ET, AV, Cruzamento, {ação}, {utilidade})**
+    etico -> hitl : tell Belief("log_evento")
+
+    == Contract Net - Fase 2 (Avaliação pelo VA) ==
+    note over va : Process Recommendation\n(Fig. 3: Plan selection)
+
+    alt Q3 = Sim (aceita)
+        == Contract Net - Fase 3a (Aceitar) ==
+        va -> env : executar_movimento(ação)
+        va -> hitl : tell Belief("log_evento",\n{tipo: sugestao_aceita})
+        note over env : Conflito resolvido!
+
+    else Q3 = Não, Q4 = Sim (pedir info)
+        == Contract Net - Fase 3b (Pedir detalhes) ==
+        va -> etico : **achieve** Goal("fornecer_detalhes")\n**ECP(AV, ET, Cruzamento, ?, ?)**
+        etico -> va : **tell** Belief("detalhes_eticos")
+        va -> env : executar_movimento(ação)
+        va -> hitl : tell Belief("log_evento")
+
+    else Q3 = Não, Q4 = Não (rejeitar)
+        == Contract Net - Fase 3c (Dismiss) ==
+        note over va : Decisão autônoma\n(dismiss recommendation)
+        va -> env : executar_movimento(ação)
+        va -> hitl : tell Belief("log_evento",\n{tipo: decisao_autonoma})
+        note over hitl : ALERTA: VA rejeitou\nrecomendação ética!
+    end
+
+else Q1 = Não, Q2 = Não (DILEMA ÉTICO)
+    == Escalar para HITL ==
+    etico -> hitl : **achieve** Goal("investigar_dilema")\n**ECP(ET, HITL, Cruzamento, {handover}, {u_i, u_j})**
+    etico -> va : **tell** Belief("aguardar_hitl")
+    note over va : Modo seguro\nvelocidade = 0\n(handover - EG 19)
+
+    == Intervenção HITL ==
+    hitl -> hitl : Analisa dilema\n(decisão humana - EG 8)
+    hitl -> etico : **achieve** Goal("executar_instrucao_hitl")
+    etico -> va : **tell** Belief("sugestao_manobra_segura",\n{origem: HITL, utilidade: 10})
+    note over va : Origem=HITL → ACEITA
+    va -> env : executar_movimento(ação)
+    va -> hitl : tell Belief("log_evento")
+end
+
+@enduml
+
+
+' ============================================================
+' DIAGRAMA 3: Raciocínio do Agente Ético (Fig. 2 do ADFERS)
+' ============================================================
+@startuml diagrama_raciocinio_etico
+
+title Raciocínio do Agente Ético\n(Baseado na Fig. 2 do ADFERS)
+
+skinparam activityBackgroundColor #FFF3E0
+
+start
+
+:Percepções do Ambiente\n(sensores do Cruzamento);
+note left
+  semaforo_aberto
+  pedestre_detectado
+  obstaculo
+  veiculo_detectado
+end note
+
+:Crenças (Beliefs)\n+ Regras de Trânsito;
+
+:Seleção de Planos\ne Utilidades (Def 2.1);
+note right
+  u_frear = calcular_utilidade_frear()
+  u_desviar = calcular_utilidade_desviar()
+  u_seguir = calcular_utilidade_seguir()
+end note
+
+if (Q1: Existe utilidade\nmaximizada?) then (sim)
+  :Seleciona plano com\nmaior utilidade;
+  :Contract Net Fase 1/2:\nEnvia ECP ao AV-agent;
+  note right
+    **tell**
+    Belief("sugestao_manobra_segura")
+    ECP(ET, AV, Cruzamento, {ação}, {utl})
+  end note
+else (não)
+  if (Q2: Tentar outro\nplano?) then (sim)
+    :Seleciona plano\nalternativo;
+    backward:Reavalia utilidades;
+  else (não)
+    :Envia warning ao HITL;
+    note right
+      **achieve**
+      Goal("investigar_dilema")
+      ECP(ET, HITL, Cruzamento,
+      {handover}, {u_i, u_j})
+    end note
+    :Envia handover ao VA;
+    note right
+      **tell**
+      Belief("aguardar_hitl")
+    end note
+  endif
+endif
+
+stop
+
+@enduml
+
+
+' ============================================================
+' DIAGRAMA 4: Raciocínio do Agente VA (Fig. 3 do ADFERS)
+' ============================================================
+@startuml diagrama_raciocinio_va
+
+title Raciocínio do Agente VA\n(Baseado na Fig. 3 do ADFERS)
+
+skinparam activityBackgroundColor #E3F2FD
+
+start
+
+:Conduzindo veículo\n(percebe ambiente para condução);
+
+:Recebe ECP do\nAgente Ético;
+note left
+  **tell**
+  Belief("sugestao_manobra_segura")
+end note
+
+:Processa recomendação\n(verifica campos do ECP);
+
+:Seleção de Planos;
+note right
+  Conectado a:
+  - Beliefs
+  - Percepções
+  - Regras de Trânsito
+end note
+
+if (Q3: Aceita a\nrecomendação?) then (sim)
+  :Executa ações\nsugeridas (atuadores);
+  :Registra log para HITL;
+else (não)
+  if (Q4: Pedir mais\ninfo ao Ético?) then (sim)
+    :Envia pedido ao Ético;
+    note right
+      achieve Goal("fornecer_detalhes")
+      ECP(AV, ET, Cruzamento, ?, ?)
+    end note
+    :Recebe detalhes;
+    :Reavalia e aceita;
+    :Executa ação;
+  else (não)
+    :Dismiss recommendation\n(decisão autônoma);
+    :Loga ALERTA para HITL;
+  endif
+endif
+
+:Registra ação no ambiente;
+stop
+
+@enduml

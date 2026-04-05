@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from maspy.environment import List, Dict, Set; print\\(List, Dict, Set\\)\")",
+      "Bash(python -c ':*)"
+    ]
+  }
+}
