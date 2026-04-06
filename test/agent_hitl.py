@@ -28,7 +28,7 @@ class AgenteHITL(Agent):
     # Contexto: nenhum
     # ============================================================
     @pl(gain, Belief("log_evento", Any))
-    def registrar_log(self, src, evento):
+    def auditar_evento(self, src, evento):
         self._log_count += 1
         self._logs.append({"id": self._log_count, "src": str(src), "evento": evento})
 
@@ -53,7 +53,7 @@ class AgenteHITL(Agent):
     # EG 19: handover routines
     # ============================================================
     @pl(gain, Goal("investigar_dilema", Any))
-    def investigar_dilema(self, src, info):
+    def tomar_decisao_humana(self, src, info):
         self.print("=" * 50)
         self.print("DILEMA ETICO RECEBIDO - Investigação iniciada")
         self.print("=" * 50)
@@ -97,7 +97,7 @@ class AgenteHITL(Agent):
     # Contexto: nenhum
     # ============================================================
     @pl(gain, Belief("alerta_decisao_autonoma", Any))
-    def processar_alerta(self, src, evento):
+    def registrar_decisao_autonoma(self, src, evento):
         self.print("ALERTA: VA tomou decisão sem aceitar recomendação")
         self.print(f"Ação: {evento.get('acao', '?')}")
         self.add(Belief("pendencia_investigacao", evento))

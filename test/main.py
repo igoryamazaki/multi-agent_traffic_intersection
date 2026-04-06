@@ -1,6 +1,22 @@
 # ============================================================
 # main.py - Inicialização do SMA (Sistema Multi-Agente)
 #
+# Selecione o cenário alterando a variável CENARIO:
+#
+#   "exemplo2"  -> Exemplo 2 do artigo
+#                  Pedestre + sinal verde, sem carro atrás
+#                  u_frear=10, u_seguir=9 -> Q1=Sim -> frear
+#                  VA: Q3=Sim -> aceita -> executa
+#
+#   "dilema"    -> Exemplo 1 do artigo
+#                  Pedestre + sinal verde + carro atrás
+#                  u_frear=10, u_seguir=10 -> Q1=Nao -> HITL
+#                  VA: aguarda handover (EG 19)
+#
+#   "q4"        -> Cenario Q4
+#                  Obstaculo + veiculo lateral
+#                  Etico recomenda desviar (obstaculo); VA percebe
+#                  veiculo_lateral -> Q3=Nao -> Q4=Sim -> pede detalhes
 # ============================================================
 
 from maspy import *
@@ -9,13 +25,13 @@ from agent_va import AgenteVA
 from agent_ethical import AgenteEtico
 from agent_hitl import AgenteHITL
 
-
 def main():
     print("=" * 60)
-    print("  Arquitetura Ética para Veículos Autônomos")
+    print("  Arquitetura Etica para Veiculos Autonomos")
     print("=" * 60)
 
     # Passo 1: Ambiente urbano (cruzamento)
+    # Para mudar o cenario, edite os Percepts em environment.py
     cruzamento = AmbienteUrbano("Cruzamento")
     print("[Setup] Ambiente 'Cruzamento' criado")
 
@@ -36,7 +52,7 @@ def main():
     )
     print("[Setup] Agentes conectados ao ambiente e canal")
 
-    # Passo 5: Relatório
+    # Passo 5: Relatorio
     Admin().report = True
 
     # Passo 6: Iniciar
@@ -47,7 +63,7 @@ def main():
     Admin().start_system()
 
     print("\n" + "=" * 60)
-    print("  Execução finalizada!")
+    print("  Execucao finalizada!")
     print("=" * 60)
 
 

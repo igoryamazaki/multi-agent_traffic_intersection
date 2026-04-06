@@ -43,7 +43,7 @@ class AgenteVA(Agent):
     # O Agente Ético é quem monitora conflitos éticos.
     # ============================================================
     @pl(gain, Goal("conduzir"), Belief("conduzindo", Any))
-    def conduzir(self, src, status):
+    def iniciar_conducao(self, src, status):
         self.print("Conduzindo veículo autônomo...")
 
         # Percebe o ambiente (sensores de condução)
@@ -70,42 +70,79 @@ class AgenteVA(Agent):
     #
     # ==== CONTRACT NET - FASE 3 (Decisão) ====
     # VA recebe proposta ECP do Ético e avalia (Fig. 3):
-    #   Q3: Aceita a recomendação?
+    #   Q3: Recomendação é coerente com percepções e regras do VA?
     #     Sim → executa ação
-    #     Não → Q4: Pedir mais info ao Ético?
-    #       Sim → envia ECP(AV, ET, RJ, ?, ?) pedindo detalhes
+    #     Não → Q4: Situação é perigosa (pedestre/veículo)?
+    #       Sim → envia ECP(AV, ET, RJ-1, ?, ?) pedindo detalhes ao Ético
     #       Não → dismiss recommendation (decisão autônoma)
     # ============================================================
     @pl(gain, Belief("sugestao_manobra_segura", Any),
          Belief("conduzindo", Any))
-    def processar_recomendacao(self, src, recomendacao, status):
-        acao = recomendacao.get("acao", "frear")
-        utilidade = recomendacao.get("utilidade", 0)
-        origem = recomendacao.get("origem", "AgenteEtico")
+    def avaliar_proposta_etica(self, src, recomendacao, status):
+        acao    = recomendacao.get("acao", "frear")
+        origem  = recomendacao.get("origem", "AgenteEtico")
+        conflito = recomendacao.get("conflito", HashableDict())
 
         self.print(f"Contract Net Fase 3 - Proposta recebida de {src}:")
-        self.print(f"  Ação={acao}, Utilidade={utilidade}, Origem={origem}")
+        self.print(f"  ECP: Ação={acao}, Origem={origem}")
 
-        # Q3: Aceita a recomendação? (Fig. 3)
-        if origem == "HITL" or utilidade >= 5.0:
-            # Q3 = Sim → Aceita
-            self.print(f"Q3: Sim - Recomendação ACEITA: {acao}")
-            self.add(Belief("conflito_pendente", recomendacao.get("conflito", HashableDict())))
+        # Decisão humana (EG 19): aceita sempre, sem questionar
+        if origem == "HITL":
+            self.print("Q3: Sim - Origem HITL, decisão humana aceita diretamente")
+            self.add(Belief("conflito_pendente", conflito))
             self.add(Goal("aceitar_sugestao", ((acao, recomendacao),)))
+            return
 
-        elif utilidade >= 2.0:
-            # Q3 = Não → Q4 = Sim → Pedir mais detalhes
-            # ECP(AV, ET, RJ-1, ?, ?) - artigo Seção III-B
-            self.print(f"Q3: Não. Q4: Sim - Pedindo mais detalhes ao Ético")
-            self.print(f"  ECP(AV, ET, Cruzamento, ?, ?)")
-            self.add(Belief("conflito_pendente", recomendacao.get("conflito", HashableDict())))
-            self.add(Belief("recomendacao_pendente", recomendacao))
-            self.add(Goal("pedir_detalhes", recomendacao.get("conflito", HashableDict())))
+        # Lê percepções atuais do ambiente (regras de trânsito do VA)
+        p_semaforo  = self.get(Belief("semaforo_aberto",    Any, "Cruzamento"))
+        p_pedestre  = self.get(Belief("pedestre_detectado", Any, "Cruzamento"))
+        p_obstaculo = self.get(Belief("obstaculo",          Any, "Cruzamento"))
+        p_veiculo   = self.get(Belief("veiculo_detectado",  Any, "Cruzamento"))
+        p_v_lateral = self.get(Belief("veiculo_lateral",    Any, "Cruzamento"))
 
+        semaforo   = p_semaforo.values  if p_semaforo  else 0
+        pedestre   = p_pedestre.values  if p_pedestre  else 0
+        obstaculo  = p_obstaculo.values if p_obstaculo else 0
+        veiculo    = p_veiculo.values   if p_veiculo   else 0
+        v_lateral  = p_v_lateral.values if p_v_lateral else 0
+
+        self.print(f"  Percepções VA: semaforo={semaforo}, pedestre={pedestre}, "
+                   f"obstaculo={obstaculo}, veiculo={veiculo}, veiculo_lateral={v_lateral}")
+
+        # Q3: A recomendação é coerente com o que o VA percebe?
+        # Regras:
+        #   frear   → coerente se há pedestre, veículo, obstáculo ou sinal fechado
+        #   desviar → coerente se há obstáculo, sem pedestre, sem veículo (frontal ou lateral)
+        #             veiculo_lateral bloqueia desvio → Q3=Não → Q4
+        #   seguir  → coerente se sinal aberto e sem obstáculos/pedestres/veículos
+        if acao == "frear":
+            q3 = bool(pedestre or veiculo or obstaculo or not semaforo)
+        elif acao == "desviar":
+            q3 = bool(obstaculo and not pedestre and not veiculo and not v_lateral)
+        elif acao == "seguir":
+            q3 = bool(semaforo and not pedestre and not veiculo and not obstaculo)
         else:
-            # Q3 = Não, Q4 = Não → Dismiss recommendation (Fig. 3)
-            self.print(f"Q3: Não. Q4: Não - Recomendação REJEITADA")
-            self.add(Goal("decisao_autonoma", recomendacao.get("conflito", HashableDict())))
+            q3 = False
+
+        if q3:
+            self.print(f"Q3: Sim - '{acao}' é coerente com as percepções do VA")
+            self.add(Belief("conflito_pendente", conflito))
+            self.add(Goal("aceitar_sugestao", ((acao, recomendacao),)))
+        else:
+            # Q4: situação tem perigo real que impede executar a recomendação?
+            # Inclui veiculo_lateral pois bloqueia desvio com risco de colisão
+            situacao_perigosa = bool(pedestre or veiculo or v_lateral)
+            if situacao_perigosa:
+                self.print(f"Q3: Não - '{acao}' conflita com percepções. "
+                           f"Q4: Sim - Situação perigosa, pedindo alternativa ao Ético")
+                self.print(f"  ECP(AV, ET, Cruzamento, ?, ?)")
+                self.add(Belief("conflito_pendente", conflito))
+                self.add(Belief("recomendacao_pendente", recomendacao))
+                self.add(Goal("pedir_detalhes", conflito))
+            else:
+                self.print(f"Q3: Não - '{acao}' conflita com percepções. "
+                           f"Q4: Não - Sem perigo imediato, VA decide autonomamente")
+                self.add(Goal("decisao_autonoma", conflito))
 
     # ============================================================
     # PLANO 3: Aceitar sugestão e executar ação
@@ -115,7 +152,7 @@ class AgenteVA(Agent):
     # Fig. 3: Q3=Sim → "execute actions"
     # ============================================================
     @pl(gain, Goal("aceitar_sugestao", Any), Belief("conduzindo", Any))
-    def aceitar_sugestao(self, src, dados, status):
+    def executar_acao_recomendada(self, src, dados, status):
         acao, recomendacao = dados
         self.print(f"Executando ação recomendada: {acao}")
 
@@ -149,7 +186,7 @@ class AgenteVA(Agent):
     # ECP(AV, ET, RJ-1, ?, ?) - pede conjunto diferente de ações
     # ============================================================
     @pl(gain, Goal("pedir_detalhes", Any))
-    def pedir_detalhes(self, src, conflito):
+    def consultar_etico(self, src, conflito):
         self.print(f"Pedindo mais detalhes ao Agente Ético")
 
         pedido = HashableDict({"conflito": conflito, "solicitante": self.my_name})
@@ -168,7 +205,7 @@ class AgenteVA(Agent):
     # ============================================================
     @pl(gain, Belief("detalhes_eticos", Any),
          Belief("recomendacao_pendente", Any))
-    def processar_detalhes(self, src, detalhes, rec_pendente):
+    def aceitar_alternativa(self, src, detalhes, rec_pendente):
         self.print(f"Detalhes recebidos do Agente Ético")
 
         acao = detalhes.get("recomendacao_original", "frear")
@@ -183,7 +220,7 @@ class AgenteVA(Agent):
     # Fig. 3: "dismiss recommendation" → VA decide sozinho
     # ============================================================
     @pl(gain, Goal("decisao_autonoma", Any), Belief("conduzindo", Any))
-    def decisao_autonoma(self, src, conflito, status):
+    def descartar_e_decidir(self, src, conflito, status):
         self.print(f"Decisão autônoma para: {conflito}")
 
         if conflito.get("tipo") == "pedestre":
@@ -212,7 +249,7 @@ class AgenteVA(Agent):
     # EG 19: "safe condition" / handover routines
     # ============================================================
     @pl(gain, Belief("aguardar_hitl", Any))
-    def aguardar_hitl(self, src, info):
+    def entrar_em_modo_seguro(self, src, info):
         self.print("DILEMA ÉTICO! Aguardando decisão do HITL...")
         self.print(f"Info: {info.get('mensagem', '')}")
 

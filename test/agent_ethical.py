@@ -23,6 +23,16 @@ from utilities import (
     HashableDict,
 )
 
+# ============================================================
+# Percepções usadas pelo Agente Ético:
+#   semaforo_aberto      - sinal verde (1) ou vermelho (0)
+#   pedestre_detectado   - pedestre na faixa (1=sim)
+#   obstaculo            - objeto na via (1=sim)
+#   veiculo_detectado    - veículo frontal (1=sim)
+#   veiculo_atras        - carro atrás do VA (1=sim) → dilema Exemplo 1
+#   veiculo_lateral      - carro ao lado do VA (1=sim) → cenário Q4
+# ============================================================
+
 
 class AgenteEtico(Agent):
     """
@@ -46,36 +56,68 @@ class AgenteEtico(Agent):
     # Fig. 2: Percepts → Beliefs → Plan & Utility selection
     # ============================================================
     @pl(gain, Goal("monitorar_ambiente"), Belief("status_etico", Any))
-    def monitorar_ambiente(self, src, status):
+    def perceber_e_classificar_conflito(self, src, status):
         self.print("Monitorando ambiente urbano (sensores)...")
 
         # Percebe o ambiente
-        perc_semaforo = self.get(Belief("semaforo_aberto", Any, "Cruzamento"))
-        perc_pedestre = self.get(Belief("pedestre_detectado", Any, "Cruzamento"))
-        perc_obstaculo = self.get(Belief("obstaculo", Any, "Cruzamento"))
-        perc_veiculo = self.get(Belief("veiculo_detectado", Any, "Cruzamento"))
+        perc_semaforo  = self.get(Belief("semaforo_aberto",    Any, "Cruzamento"))
+        perc_pedestre  = self.get(Belief("pedestre_detectado", Any, "Cruzamento"))
+        perc_obstaculo = self.get(Belief("obstaculo",          Any, "Cruzamento"))
+        perc_veiculo   = self.get(Belief("veiculo_detectado",  Any, "Cruzamento"))
+        perc_v_atras   = self.get(Belief("veiculo_atras",      Any, "Cruzamento"))
+        perc_v_lateral = self.get(Belief("veiculo_lateral",    Any, "Cruzamento"))
 
-        semaforo = perc_semaforo.values if perc_semaforo else 0
-        pedestre = perc_pedestre.values if perc_pedestre else 0
-        obstaculo = perc_obstaculo.values if perc_obstaculo else 0
-        veiculo = perc_veiculo.values if perc_veiculo else 0
+        semaforo   = perc_semaforo.values  if perc_semaforo  else 0
+        pedestre   = perc_pedestre.values  if perc_pedestre  else 0
+        obstaculo  = perc_obstaculo.values if perc_obstaculo else 0
+        veiculo    = perc_veiculo.values   if perc_veiculo   else 0
+        v_atras    = perc_v_atras.values   if perc_v_atras   else 0
+        v_lateral  = perc_v_lateral.values if perc_v_lateral else 0
 
         self.print(f"Percepções: semaforo={semaforo}, pedestre={pedestre}, "
-                   f"obstaculo={obstaculo}, veiculo={veiculo}")
+                   f"obstaculo={obstaculo}, veiculo={veiculo}, "
+                   f"veiculo_atras={v_atras}, veiculo_lateral={v_lateral}")
 
-        # Detecta conflito ético
+        # ---- Detecta e classifica conflito ético ----
         conflito_detectado = False
         conflito = HashableDict()
 
-        if pedestre:
+        if pedestre and v_atras:
+            # Exemplo 1 do artigo: DILEMA ÉTICO
+            # Frear → protege pedestre (ru_safe=10)
+            # Seguir → protege passageiro de colisão traseira (av_pass_safe=10)
+            # u_i = u_j = 10 → Q1=Não → Q2=Não → HITL (EG 8)
+            conflito_detectado = True
+            conflito = HashableDict({
+                "tipo": "pedestre_veiculo_atras",
+                "semaforo": "aberto" if semaforo else "fechado",
+                "posicao": "Cruzamento",
+            })
+            self.print("CONFLITO ÉTICO DETECTADO: Pedestre + veiculo atrás (DILEMA - Exemplo 1)!")
+
+        elif pedestre:
+            # Exemplo 2 do artigo: pedestre, sem carro atrás
+            # u_frear=10 (ru_safe), u_seguir=9 (av_respects_rule) → Q1=Sim
             conflito_detectado = True
             conflito = HashableDict({
                 "tipo": "pedestre",
                 "semaforo": "aberto" if semaforo else "fechado",
                 "posicao": "Cruzamento",
-                "veiculo_atras": 1 if veiculo else 0,
             })
-            self.print(f"CONFLITO ÉTICO DETECTADO: Pedestre no cruzamento!")
+            self.print("CONFLITO ÉTICO DETECTADO: Pedestre no cruzamento (Exemplo 2)!")
+
+        elif obstaculo and v_lateral:
+            # Cenário Q4: obstáculo + veículo lateral
+            # Ético recomenda "desviar" (obstáculo) mas VA percebe veiculo_lateral
+            # → VA: Q3=Não (desviar+veiculo) → Q4=Sim → pede alternativa ao Ético
+            conflito_detectado = True
+            conflito = HashableDict({
+                "tipo": "obstaculo",
+                "semaforo": "aberto" if semaforo else "fechado",
+                "posicao": "Cruzamento",
+                "veiculo_lateral": 1,
+            })
+            self.print("CONFLITO ÉTICO DETECTADO: Obstáculo + veiculo lateral (cenario Q4)!")
 
         elif veiculo:
             conflito_detectado = True
@@ -84,7 +126,7 @@ class AgenteEtico(Agent):
                 "semaforo": "aberto" if semaforo else "fechado",
                 "posicao": "Cruzamento",
             })
-            self.print(f"CONFLITO ÉTICO DETECTADO: Veículo no cruzamento!")
+            self.print("CONFLITO ÉTICO DETECTADO: Veiculo no cruzamento!")
 
         elif obstaculo:
             conflito_detectado = True
@@ -93,7 +135,7 @@ class AgenteEtico(Agent):
                 "semaforo": "aberto" if semaforo else "fechado",
                 "posicao": "Cruzamento",
             })
-            self.print(f"CONFLITO ÉTICO DETECTADO: Obstáculo na via!")
+            self.print("CONFLITO ÉTICO DETECTADO: Obstáculo na via!")
 
         if conflito_detectado:
             if self.has(Belief("sem_conflito_ativo")):
@@ -114,7 +156,7 @@ class AgenteEtico(Agent):
     # Contract Net Fase 1: gera proposta (CFP com recomendação)
     # ============================================================
     @pl(gain, Goal("avaliar_conflito", Any), Belief("conflito_ativo", Any))
-    def avaliar_conflito(self, src, conflito, c):
+    def calcular_utilidades_e_decidir(self, src, conflito, c):
         self.print(f"Avaliando conflito: {conflito}")
 
         # Calcula utilidades (Def. 2.1)
@@ -153,7 +195,7 @@ class AgenteEtico(Agent):
     # Conforme Exemplo 2: ECP(ET, AV, RJ-2, {hit the brakes}, {u_i})
     # ============================================================
     @pl(gain, Goal("enviar_recomendacao", Any))
-    def enviar_recomendacao(self, src, recomendacao):
+    def propor_acao_ao_va(self, src, recomendacao):
         acao = recomendacao["acao"]
         utilidade = recomendacao["utilidade"]
         posicao = recomendacao.get("posicao", "Cruzamento")
@@ -189,7 +231,7 @@ class AgenteEtico(Agent):
     # ECP(ET, HITL, RJ-1, {handover, retake control}, {u_i, u_j})
     # ============================================================
     @pl(gain, Goal("escalar_para_hitl", Any), Belief("conflito_ativo", Any))
-    def escalar_para_hitl(self, src, dados, conflito):
+    def acionar_intervencao_humana(self, src, dados, conflito):
         conflito_info, relatorio = dados
 
         self.print(f"ECP(ET, HITL, {conflito_info.get('posicao')}, "
@@ -218,17 +260,25 @@ class AgenteEtico(Agent):
     # Ético responde com planos/utilidades alternativos.
     # ============================================================
     @pl(gain, Goal("fornecer_detalhes", Any))
-    def fornecer_detalhes(self, src, pedido):
+    def responder_consulta_do_va(self, src, pedido):
         conflito = pedido.get("conflito", {})
         self.print(f"VA pediu detalhes. Recalculando para: {conflito}")
 
         relatorio = gerar_relatorio_utilidades(conflito)
 
+        # Se há veiculo_lateral, desviar está bloqueado → alternativa é frear
+        # Fig. 3: Ético provê conjunto alternativo de ações ao VA
+        if conflito.get("veiculo_lateral"):
+            self.print("  veiculo_lateral detectado → alternativa: frear (desviar bloqueado)")
+            acao_alternativa = "frear"
+        else:
+            acao_alternativa = relatorio["acao_recomendada"]
+
         detalhes = HashableDict({
             "tipo": "detalhes_completos",
             "relatorio": relatorio,
             "todas_opcoes": relatorio["utilidades"],
-            "recomendacao_original": relatorio["acao_recomendada"],
+            "recomendacao_original": acao_alternativa,
         })
 
         self.send(str(src), tell, Belief("detalhes_eticos", detalhes), "AgentComm")
@@ -242,7 +292,7 @@ class AgenteEtico(Agent):
     # Contexto: nenhum
     # ============================================================
     @pl(gain, Goal("executar_instrucao_hitl", Any))
-    def executar_instrucao_hitl(self, src, instrucao):
+    def repassar_decisao_humana(self, src, instrucao):
         self.print(f"Instrução do HITL: {instrucao}")
 
         recomendacao = HashableDict({
