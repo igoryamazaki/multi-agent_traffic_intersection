@@ -21,6 +21,12 @@ from utilities import (
     selecionar_melhor_acao,
     gerar_relatorio_utilidades,
     HashableDict,
+    ConflitoGaltung,
+    criar_conflito_pedestre,
+    criar_conflito_dilema,
+    criar_conflito_obstaculo,
+    criar_conflito_veiculo,
+    criar_conflito_pedestre_zona_escolar,
 )
 
 # ============================================================
@@ -31,6 +37,7 @@ from utilities import (
 #   veiculo_detectado    - veículo frontal (1=sim)
 #   veiculo_atras        - carro atrás do VA (1=sim) → dilema Exemplo 1
 #   veiculo_lateral      - carro ao lado do VA (1=sim) → cenário Q4
+#   zona_escolar         - VA em zona escolar (1=sim) → MODD (transfer) se sinal aberto
 # ============================================================
 
 
@@ -46,6 +53,47 @@ class AgenteEtico(Agent):
         self.add(Belief("sem_conflito_ativo"))
         # ---- Objetivo inicial: monitorar ambiente (Fig. 1) ----
         self.add(Goal("monitorar_ambiente"))
+        # ---- MODD: Moral Operational Design Domain (Rakow et al. EUMAS 2024, Seção 4.2) ----
+        # Define contextos de resolução autônoma (resolve) vs. transferência ao HITL (transfer).
+        # threshold_minimo: diferença mínima de utilidade para decisão autônoma confiável.
+        # Nota: "pedestre_veiculo_atras" (dilema genuíno) NÃO consta no MODD porque
+        # eh_dilema=True → Q1=Não dispara primeiro, escalando ao HITL antes de o MODD
+        # ser consultado. Dilemas verdadeiros (u_i=u_j) são tratados pelo fluxo Q1/Q2,
+        # não pelo MODD (Def. 2.2, NB2). O MODD trata incerteza de decisão, não empate.
+        self.modd = {
+            "pedestre":              {"resolver_autonomo": True, "threshold_minimo": 1.0, "autoridade": "AgenteEtico", "prioridade": "proteger_pedestre",    "justificativa": "EG 2"},
+            # threshold=4.0: sinal aberto → diff=3.0 < 4.0 → (transfer); fechado → diff=4.0 → (resolve)
+            "pedestre_zona_escolar": {"resolver_autonomo": True, "threshold_minimo": 4.0, "autoridade": "HITL",        "prioridade": "alta_vigilancia",      "justificativa": "EG 2 + zona escolar"},
+            "obstaculo":             {"resolver_autonomo": True, "threshold_minimo": 0.5, "autoridade": "AgenteEtico", "prioridade": "evitar_obstaculo",     "justificativa": "EG 5"},
+            "veiculo":               {"resolver_autonomo": True, "threshold_minimo": 1.0, "autoridade": "AgenteEtico", "prioridade": "evitar_colisao",       "justificativa": "EG 7"},
+            "_default":              {"resolver_autonomo": False, "threshold_minimo": float("inf"), "autoridade": "HITL", "prioridade": "seguranca_maxima", "justificativa": "tipo desconhecido"},
+        }
+
+    # ============================================================
+    # MODD: Moral Operational Design Domain
+    # Rakow et al. EUMAS 2024, Seção 4.2
+    # ============================================================
+
+    def consultar_modd(self, tipo):
+        """Retorna regra MODD para o tipo de conflito."""
+        return self.modd.get(tipo, self.modd["_default"])
+
+    def modd_pode_resolver(self, tipo, diferenca):
+        """(resolve): True se MODD autoriza resolução autônoma.
+        Condição: resolver_autonomo=True E diferenca >= threshold_minimo."""
+        regra = self.consultar_modd(tipo)
+        return regra["resolver_autonomo"] and diferenca >= regra["threshold_minimo"]
+
+    def modd_explicar(self, tipo, diferenca):
+        """Retorna string de auditoria MODD para log."""
+        regra = self.consultar_modd(tipo)
+        pode = self.modd_pode_resolver(tipo, diferenca)
+        modo = "(resolve)" if pode else "(transfer)"
+        return (
+            f"MODD {modo} | tipo={tipo} | diff={diferenca:.2f} "
+            f"threshold={regra['threshold_minimo']} | "
+            f"autoridade={regra['autoridade']} | {regra['justificativa']}"
+        )
 
     # ============================================================
     # PLANO 1: Monitorar o ambiente urbano
@@ -60,23 +108,26 @@ class AgenteEtico(Agent):
         self.print("Monitorando ambiente urbano (sensores)...")
 
         # Percebe o ambiente
-        perc_semaforo  = self.get(Belief("semaforo_aberto",    Any, "Cruzamento"))
-        perc_pedestre  = self.get(Belief("pedestre_detectado", Any, "Cruzamento"))
-        perc_obstaculo = self.get(Belief("obstaculo",          Any, "Cruzamento"))
-        perc_veiculo   = self.get(Belief("veiculo_detectado",  Any, "Cruzamento"))
-        perc_v_atras   = self.get(Belief("veiculo_atras",      Any, "Cruzamento"))
-        perc_v_lateral = self.get(Belief("veiculo_lateral",    Any, "Cruzamento"))
+        perc_semaforo     = self.get(Belief("semaforo_aberto",    Any, "Cruzamento"))
+        perc_pedestre     = self.get(Belief("pedestre_detectado", Any, "Cruzamento"))
+        perc_obstaculo    = self.get(Belief("obstaculo",          Any, "Cruzamento"))
+        perc_veiculo      = self.get(Belief("veiculo_detectado",  Any, "Cruzamento"))
+        perc_v_atras      = self.get(Belief("veiculo_atras",      Any, "Cruzamento"))
+        perc_v_lateral    = self.get(Belief("veiculo_lateral",    Any, "Cruzamento"))
+        perc_zona_escolar = self.get(Belief("zona_escolar",       Any, "Cruzamento"))
 
-        semaforo   = perc_semaforo.values  if perc_semaforo  else 0
-        pedestre   = perc_pedestre.values  if perc_pedestre  else 0
-        obstaculo  = perc_obstaculo.values if perc_obstaculo else 0
-        veiculo    = perc_veiculo.values   if perc_veiculo   else 0
-        v_atras    = perc_v_atras.values   if perc_v_atras   else 0
-        v_lateral  = perc_v_lateral.values if perc_v_lateral else 0
+        semaforo     = perc_semaforo.values     if perc_semaforo     else 0
+        pedestre     = perc_pedestre.values     if perc_pedestre     else 0
+        obstaculo    = perc_obstaculo.values    if perc_obstaculo    else 0
+        veiculo      = perc_veiculo.values      if perc_veiculo      else 0
+        v_atras      = perc_v_atras.values      if perc_v_atras      else 0
+        v_lateral    = perc_v_lateral.values    if perc_v_lateral    else 0
+        zona_escolar = perc_zona_escolar.values if perc_zona_escolar else 0
 
         self.print(f"Percepções: semaforo={semaforo}, pedestre={pedestre}, "
                    f"obstaculo={obstaculo}, veiculo={veiculo}, "
-                   f"veiculo_atras={v_atras}, veiculo_lateral={v_lateral}")
+                   f"veiculo_atras={v_atras}, veiculo_lateral={v_lateral}, "
+                   f"zona_escolar={zona_escolar}")
 
         # ---- Detecta e classifica conflito ético ----
         conflito_detectado = False
@@ -88,22 +139,22 @@ class AgenteEtico(Agent):
             # Seguir → protege passageiro de colisão traseira (av_pass_safe=10)
             # u_i = u_j = 10 → Q1=Não → Q2=Não → HITL (EG 8)
             conflito_detectado = True
-            conflito = HashableDict({
-                "tipo": "pedestre_veiculo_atras",
-                "semaforo": "aberto" if semaforo else "fechado",
-                "posicao": "Cruzamento",
-            })
+            conflito = criar_conflito_dilema(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral)
             self.print("CONFLITO ÉTICO DETECTADO: Pedestre + veiculo atrás (DILEMA - Exemplo 1)!")
+
+        elif pedestre and zona_escolar:
+            # Cenário MODD (transfer): pedestre em zona escolar
+            # MODD threshold=4.0: sinal aberto → diff=3.0 < 4.0 → (transfer) → HITL
+            #                     sinal fechado → diff=4.0 ≥ 4.0 → (resolve) → VA executa
+            conflito_detectado = True
+            conflito = criar_conflito_pedestre_zona_escolar(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral)
+            self.print("CONFLITO ÉTICO DETECTADO: Pedestre em zona escolar (MODD threshold elevado)!")
 
         elif pedestre:
             # Exemplo 2 do artigo: pedestre, sem carro atrás
             # u_frear=10 (ru_safe), u_seguir=9 (av_respects_rule) → Q1=Sim
             conflito_detectado = True
-            conflito = HashableDict({
-                "tipo": "pedestre",
-                "semaforo": "aberto" if semaforo else "fechado",
-                "posicao": "Cruzamento",
-            })
+            conflito = criar_conflito_pedestre(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral)
             self.print("CONFLITO ÉTICO DETECTADO: Pedestre no cruzamento (Exemplo 2)!")
 
         elif obstaculo and v_lateral:
@@ -111,30 +162,17 @@ class AgenteEtico(Agent):
             # Ético recomenda "desviar" (obstáculo) mas VA percebe veiculo_lateral
             # → VA: Q3=Não (desviar+veiculo) → Q4=Sim → pede alternativa ao Ético
             conflito_detectado = True
-            conflito = HashableDict({
-                "tipo": "obstaculo",
-                "semaforo": "aberto" if semaforo else "fechado",
-                "posicao": "Cruzamento",
-                "veiculo_lateral": 1,
-            })
+            conflito = criar_conflito_obstaculo(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral)
             self.print("CONFLITO ÉTICO DETECTADO: Obstáculo + veiculo lateral (cenario Q4)!")
 
         elif veiculo:
             conflito_detectado = True
-            conflito = HashableDict({
-                "tipo": "veiculo",
-                "semaforo": "aberto" if semaforo else "fechado",
-                "posicao": "Cruzamento",
-            })
+            conflito = criar_conflito_veiculo(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral)
             self.print("CONFLITO ÉTICO DETECTADO: Veiculo no cruzamento!")
 
         elif obstaculo:
             conflito_detectado = True
-            conflito = HashableDict({
-                "tipo": "obstaculo",
-                "semaforo": "aberto" if semaforo else "fechado",
-                "posicao": "Cruzamento",
-            })
+            conflito = criar_conflito_obstaculo(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral)
             self.print("CONFLITO ÉTICO DETECTADO: Obstáculo na via!")
 
         if conflito_detectado:
@@ -166,19 +204,34 @@ class AgenteEtico(Agent):
         self.print(f"Utilidades: {relatorio['utilidades']}")
         self.print(f"Ação recomendada: {acao} (utilidade: {utilidade})")
 
+        # Log Triângulo de Galtung (Seção 4.3: ATA explica conflito à autoridade)
+        if isinstance(conflito, ConflitoGaltung):
+            self.print(conflito.explicar())
+
         # Q1: Existe utilidade maximizada? (Fig. 2)
         if not eh_dilema:
-            # Q1 = Sim → Envia recomendação ao VA
             self.print("Q1: Sim - Utilidade maximizada encontrada")
-            recomendacao = HashableDict({
-                "acao": acao,
-                "utilidade": utilidade,
-                "conflito": conflito,
-                "origem": "AgenteEtico",
-                "posicao": conflito.get("posicao", "Cruzamento"),
-                "utilidades_usadas": relatorio["utilidades"],
-            })
-            self.add(Goal("enviar_recomendacao", recomendacao))
+            # MODD: (resolve) ou (transfer)? (Seção 4.2)
+            utilidades_vals = sorted(relatorio["utilidades"].values(), reverse=True)
+            diferenca = utilidades_vals[0] - utilidades_vals[1] if len(utilidades_vals) >= 2 else float("inf")
+            tipo = conflito.get("tipo", "_default")
+            self.print(self.modd_explicar(tipo, diferenca))
+
+            if self.modd_pode_resolver(tipo, diferenca):
+                # MODD (resolve) → envia recomendação ao VA
+                recomendacao = HashableDict({
+                    "acao": acao,
+                    "utilidade": utilidade,
+                    "conflito": conflito,
+                    "origem": "AgenteEtico",
+                    "posicao": conflito.get("posicao", "Cruzamento"),
+                    "utilidades_usadas": relatorio["utilidades"],
+                })
+                self.add(Goal("enviar_recomendacao", recomendacao))
+            else:
+                # MODD (transfer) → escala ao HITL mesmo com Q1=Sim
+                self.print("MODD (transfer): threshold não atingido → Escalar para HITL")
+                self.add(Goal("escalar_para_hitl", ((conflito, relatorio),)))
         else:
             # Q1 = Não → Q2: Tentar outro plano?
             self.print("Q1: Não - Utilidades iguais (DILEMA ÉTICO)")
@@ -238,11 +291,15 @@ class AgenteEtico(Agent):
                    f"{{handover, retake control}}, {relatorio['utilidades']})")
 
         # Envia dilema ao HITL
+        if relatorio.get("eh_dilema"):
+            mensagem = "Utilidades iguais - decisão humana necessária"
+        else:
+            mensagem = "MODD (transfer): threshold de confiança não atingido - decisão humana necessária"
         dilema_info = HashableDict({
             "tipo": "dilema_etico",
             "conflito": conflito_info,
             "relatorio": relatorio,
-            "mensagem": "Utilidades iguais - decisão humana necessária",
+            "mensagem": mensagem,
         })
         self.send("HITL", achieve, Goal("investigar_dilema", dilema_info), "AgentComm")
 

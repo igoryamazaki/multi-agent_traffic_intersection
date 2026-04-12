@@ -108,8 +108,9 @@ class AgenteHITL(Agent):
     # ============================================================
     def _tomar_decisao_humana(self, conflito, utilidades):
         tipo = conflito.get("tipo", "desconhecido")
-        if tipo == "pedestre":
-            self.print("HITL: Pedestre → FREAR (EG 7: vida humana)")
+        if tipo in ("pedestre", "pedestre_zona_escolar", "pedestre_veiculo_atras"):
+            # EG 7: vida humana é prioridade máxima — frear em qualquer cenário com pedestre
+            self.print(f"HITL: {tipo} → FREAR (EG 7: vida humana)")
             return "frear"
         elif tipo == "veiculo":
             self.print("HITL: Veículo → FREAR (segurança)")

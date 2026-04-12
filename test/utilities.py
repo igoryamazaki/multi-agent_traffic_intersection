@@ -20,6 +20,33 @@ class HashableDict(dict):
         return hash(_make_hashable(self))
 
 
+class ConflitoGaltung(HashableDict):
+    """
+    Triângulo de Galtung (Rakow et al. EUMAS 2024, Seção 3):
+    Formaliza o conflito ético em três vértices:
+      V1 = crenças/percepções do ambiente
+      V2 = metas incompatíveis entre VA e Ético
+      V3 = ações opostas derivadas das metas
+    Herda HashableDict para compatibilidade com Belief/Goal da MASPY.
+    """
+    def __init__(self, dados_adfers, metas_incompativeis, acoes_opostas, crencas):
+        super().__init__(dados_adfers)
+        self["metas_incompativeis"] = tuple(metas_incompativeis)
+        self["acoes_opostas"] = tuple(acoes_opostas)
+        self["crencas"] = HashableDict(crencas)
+
+    def explicar(self):
+        """Retorna string descritiva dos três vértices para auditoria (Seção 4.3)."""
+        v1 = dict(self["crencas"])
+        v2 = self["metas_incompativeis"]
+        v3 = self["acoes_opostas"]
+        return (
+            f"Galtung V1(crenças)={v1} | "
+            f"V2(metas)={v2} | "
+            f"V3(ações)={v3}"
+        )
+
+
 # ---- Constantes de utilidade (Definição 2.1) ----
 RU_SAFE = 10              # Usuários da via seguros (EG 1, 2)
 AV_PASS_SAFE = 10         # Passageiros do VA seguros (EG 7)
@@ -34,10 +61,13 @@ TRAFFIC_ENV_DAMAGE = -2    # Dano ao ambiente de trânsito
 # u_frear=10, u_seguir=9, u_desviar~7  →  Q1=Sim → frear
 # ============================================================
 
+_TIPOS_PEDESTRE = ("pedestre", "pedestre_zona_escolar")
+
+
 def calcular_utilidade_frear(conflito):
     """Utilidade de FREAR. Ex2 do artigo: pedestre → u_i = 10 (ru_safe)."""
     utilidade = 0.0
-    if conflito.get("tipo") == "pedestre":
+    if conflito.get("tipo") in _TIPOS_PEDESTRE:
         utilidade += RU_SAFE                    # 10: protege pedestre
     elif conflito.get("tipo") == "veiculo":
         utilidade += AV_PASS_SAFE * 0.8         # 8: evita colisão frontal
@@ -51,7 +81,7 @@ def calcular_utilidade_frear(conflito):
 def calcular_utilidade_desviar(conflito):
     """Utilidade de DESVIAR. Protege parcialmente com risco ambiental."""
     utilidade = 0.0
-    if conflito.get("tipo") == "pedestre":
+    if conflito.get("tipo") in _TIPOS_PEDESTRE:
         utilidade += RU_SAFE * 0.7              # 7: protege parcialmente
     elif conflito.get("tipo") == "veiculo":
         utilidade += AV_PASS_SAFE * 0.6         # 6: desvio parcial
@@ -66,7 +96,7 @@ def calcular_utilidade_seguir(conflito):
     utilidade = 0.0
     if conflito.get("semaforo") == "aberto":
         utilidade += AV_RESPECTS_RULE           # 9: respeita regra de trânsito
-    if conflito.get("tipo") == "pedestre":
+    if conflito.get("tipo") in _TIPOS_PEDESTRE:
         utilidade -= RU_SAFE                    # -10: atropela pedestre
     elif conflito.get("tipo") == "veiculo":
         utilidade -= AV_PASS_SAFE * 0.5         # -5: risco de colisão frontal
@@ -172,3 +202,86 @@ def gerar_relatorio_utilidades(conflito):
         "utilidade_selecionada": utilidade,
         "eh_dilema": dilema,
     })
+
+
+# ============================================================
+# FACTORY FUNCTIONS — Triângulo de Galtung (EUMAS 2024, Seção 3)
+# Criam ConflitoGaltung a partir das percepções brutas do Ético.
+# V3 é dinâmico: acao_va_padrao depende do semáforo.
+# ============================================================
+
+def criar_conflito_pedestre(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral):
+    """Exemplo 2: pedestre sem carro atrás. V3: VA seguiria se sinal aberto."""
+    acao_va_padrao = "seguir" if semaforo else "frear"
+    return ConflitoGaltung(
+        {"tipo": "pedestre", "semaforo": "aberto" if semaforo else "fechado", "posicao": "Cruzamento"},
+        metas_incompativeis=("VA: respeitar_sinal_transito", "Etico: proteger_pedestre"),
+        acoes_opostas=(acao_va_padrao, "frear"),
+        crencas={"semaforo": semaforo, "pedestre": pedestre, "obstaculo": obstaculo,
+                 "veiculo": veiculo, "veiculo_atras": v_atras, "veiculo_lateral": v_lateral},
+    )
+
+
+def criar_conflito_dilema(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral):
+    """Exemplo 1: pedestre + veiculo atrás. Metas simétricas → DILEMA."""
+    return ConflitoGaltung(
+        {"tipo": "pedestre_veiculo_atras", "semaforo": "aberto" if semaforo else "fechado", "posicao": "Cruzamento"},
+        metas_incompativeis=("VA: proteger_passageiro_colisao_traseira", "Etico: proteger_pedestre"),
+        acoes_opostas=("seguir", "frear"),
+        crencas={"semaforo": semaforo, "pedestre": pedestre, "obstaculo": obstaculo,
+                 "veiculo": veiculo, "veiculo_atras": v_atras, "veiculo_lateral": v_lateral},
+    )
+
+
+def criar_conflito_obstaculo(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral):
+    """Obstáculo simples ou Q4 (v_lateral).
+    V3[1] (ação Ético) é dinâmico: semaforo=aberto → desviar (6.5 > 6); fechado → frear (7 > 6.5).
+    Com v_lateral: desviar é enviado mas VA rejeita (Q3=Não) → Q4 redireciona para frear."""
+    acao_va_padrao = "seguir" if semaforo else "frear"
+    # semaforo=aberto: frear=6, desviar=6.5 → desviar vence
+    # semaforo=fechado: frear=7, desviar=6.5 → frear vence (sem AV_DAMAGE)
+    acao_etico = "desviar" if semaforo else "frear"
+    if v_lateral:
+        # V3[1]="desviar" (semaforo=aberto): VA rejeita via Q3 → Q4 → frear.
+        # Galtung documenta a ação inicial recomendada, não a final após Q4.
+        metas = ("VA: manter_trajetoria", "Etico: evitar_obstaculo_e_veiculo_lateral")
+        acoes = (acao_va_padrao, acao_etico)
+    else:
+        metas = ("VA: manter_trajetoria", "Etico: evitar_obstaculo")
+        acoes = (acao_va_padrao, acao_etico)
+    return ConflitoGaltung(
+        {"tipo": "obstaculo", "semaforo": "aberto" if semaforo else "fechado",
+         "posicao": "Cruzamento", "veiculo_lateral": v_lateral},
+        metas_incompativeis=metas,
+        acoes_opostas=acoes,
+        crencas={"semaforo": semaforo, "pedestre": pedestre, "obstaculo": obstaculo,
+                 "veiculo": veiculo, "veiculo_atras": v_atras, "veiculo_lateral": v_lateral},
+    )
+
+
+def criar_conflito_veiculo(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral):
+    """Veículo frontal. V3: VA manteria velocidade, Ético recomenda frear."""
+    acao_va_padrao = "seguir" if semaforo else "frear"
+    return ConflitoGaltung(
+        {"tipo": "veiculo", "semaforo": "aberto" if semaforo else "fechado", "posicao": "Cruzamento"},
+        metas_incompativeis=("VA: manter_velocidade", "Etico: evitar_colisao"),
+        acoes_opostas=(acao_va_padrao, "frear"),
+        crencas={"semaforo": semaforo, "pedestre": pedestre, "obstaculo": obstaculo,
+                 "veiculo": veiculo, "veiculo_atras": v_atras, "veiculo_lateral": v_lateral},
+    )
+
+
+def criar_conflito_pedestre_zona_escolar(semaforo, pedestre, obstaculo, veiculo, v_atras, v_lateral):
+    """Pedestre em zona escolar (zona_escolar=1).
+    MODD threshold=4.0: semaforo=aberto → diff=3.0 < 4.0 → (transfer) → HITL.
+                        semaforo=fechado → diff=4.0 >= 4.0 → (resolve) → VA executa."""
+    acao_va_padrao = "seguir" if semaforo else "frear"
+    return ConflitoGaltung(
+        {"tipo": "pedestre_zona_escolar", "semaforo": "aberto" if semaforo else "fechado",
+         "posicao": "Cruzamento", "zona_escolar": 1},
+        metas_incompativeis=("VA: respeitar_sinal_transito", "Etico: proteger_pedestre_zona_escolar"),
+        acoes_opostas=(acao_va_padrao, "frear"),
+        crencas={"semaforo": semaforo, "pedestre": pedestre, "obstaculo": obstaculo,
+                 "veiculo": veiculo, "veiculo_atras": v_atras, "veiculo_lateral": v_lateral,
+                 "zona_escolar": 1},
+    )
